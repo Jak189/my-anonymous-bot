@@ -1,9 +1,26 @@
 import os
+import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
+# የቦትህ Token
 TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
 
+# ለ Render ጤንነት ማረጋገጫ (Health Check) የሚያገለግል ትንሽ ሰርቨር
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+def run_health_check():
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+# ቦት Logic
 waiting_users = []
 active_chats = {}
 
@@ -50,9 +67,15 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=active_chats[user_id], text=update.message.text)
 
 if __name__ == '__main__':
+    # Health check ሰርቨሩን በሌላ Thread አስጀምር
+    threading.Thread(target=run_health_check, daemon=True).start()
+    
+    # ቦቱን አስጀምር
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))
+    
+    print("ቦቱ እየሰራ ነው...")
     app.run_polling()
