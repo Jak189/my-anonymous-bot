@@ -1,103 +1,101 @@
 import os
-import threading
-import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
-# --- 1. Settings ---
-TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
-ADMINS = [8394878208, 7231324244]
+# ሰርቨር ላይ ምን እየተካሄደ እንደሆነ ለማየት (Logging)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-user_data = {} 
-users_list = [] 
-active_chats = {} 
-registration_steps = {} 
-waiting_pool = []
-
-# --- 2. Health Check ---
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"English Bot is Active!")
-
-def run_health_server():
-    port = int(os.environ.get('PORT', 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
-
-# --- 3. Registration (In English) ---
+# ተጠቃሚዎችን ለመያዝ
+waiting_users = []  # ሰው የሚጠብቁ
+active_chats = {}   # የተገናኙ (User A: User B)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in user_data:
-        registration_steps[user_id] = "full_name"
-        await update.message.reply_text("👋 Welcome to Anonymous Dating Bot!\n\nPlease register first. Enter your full name:")
-    else:
-        await show_main_menu(update)
-
-async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
+    keyboard = [
+        [InlineKeyboardButton("⚡ Find a partner", callback_data='search')],
+        [InlineKeyboardButton("👤 My Profile", callback_data='profile')],
+        [InlineKeyboardButton("⚙️ Settings", callback_data='settings')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    step = registration_steps[user_id]
-    if step == "full_name":
-        user_data[user_id] = {'name': text, 'id': user_id, 'username': update.effective_user.username or "None", 'date': datetime.datetime.now().strftime("%Y-%m-%d")}
-        registration_steps[user_id] = "gender"
-        await update.message.reply_text("Select your gender (Male/Female):")
-    elif step == "gender":
-        user_data[user_id]['gender'] = text
-        registration_steps[user_id] = "age"
-        await update.message.reply_text("Enter your age:")
-    elif step == "age":
-        user_data[user_id]['age'] = text
-        registration_steps[user_id] = "location"
-        await update.message.reply_text("Enter your city/location:")
-    elif step == "location":
-        user_data[user_id]['location'] = text
-        del registration_steps[user_id]
-        users_list.append(user_id)
-        await update.message.reply_text("Registration Complete! ✅\n\n🚮 for more info @penguiner")
-        for admin in ADMINS:
-            await context.bot.send_message(admin, f"🆕 New User Registered: {user_data[user_id]['name']}")
-        await show_main_menu(update)
+    await update.message.reply_text(
+        "👋 Hi, I'm an anonymous chat bot.\nUse the menu or type /search.",
+        reply_markup=reply_markup
+    )
 
-async def show_main_menu(update):
-    keyboard = [[InlineKeyboardButton("🎲 Find Partner", callback_data='find')]]
-    msg = "Main Menu:"
-    if update.message:
-        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.callback_query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def handle_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
+    # ተጠቃሚው ቀድሞውኑ በቻት ውስጥ ከሆነ
+    if user_id in active_chats:
+        await update.message.reply_text("You are already in a chat! Type /stop to end it.")
+        return
+
+    # ተጠቃሚው ቀድሞውኑ ሰርች እያደረገ ከሆነ
+    if user_id in waiting_users:
+        await update.message.reply_text("Searching for a partner... Please wait.")
+        return
+
+    if waiting_users:
+        # አጋር ተገኘ!
+        partner_id = waiting_users.pop(0)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+        
+        await context.bot.send_message(chat_id=user_id, text="👀 Start chatting!\n/stop - end chat")
+        await context.bot.send_message(chat_id=partner_id, text="👀 Start chatting!\n/stop - end chat")
+    else:
+        # የሚጠብቅ ሰው ከሌለ መጠበቂያ ዝርዝር ውስጥ መግባት
+        waiting_users.append(user_id)
+        await update.message.reply_text("🔎 Searching for a partner...")
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id in active_chats:
+        partner_id = active_chats.pop(user_id)
+        active_chats.pop(partner_id, None)
+        
+        await context.bot.send_message(chat_id=user_id, text="🛑 You left the chat.")
+        await context.bot.send_message(chat_id=partner_id, text="🛑 Your partner ended the chat.")
+    elif user_id in waiting_users:
+        waiting_users.remove(user_id)
+        await update.message.reply_text("Search cancelled.")
+    else:
+        await update.message.reply_text("You are not in an active chat.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
     if user_id in active_chats:
         partner_id = active_chats[user_id]
-        if update.message.text and ("@" in update.message.text or "t.me/" in update.message.text):
-            await update.message.reply_text("⚠️ Sharing usernames/links is not allowed!")
-            return
-        await update.message.copy(chat_id=partner_id)
+        # መልዕክቱን ለአጋሩ ማስተላለፍ
+        if update.message.text:
+            await context.bot.send_message(chat_id=partner_id, text=update.message.text)
+        elif update.message.photo:
+            await context.bot.send_photo(chat_id=partner_id, photo=update.message.photo[-1].file_id)
+    else:
+        await update.message.reply_text("You are not connected to anyone. Type /search to find a partner.")
 
-# --- 4. Admin Commands (In English) ---
-
-async def admin_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMINS: return
-    msg = "📊 Registered Users:\n\n"
-    for i, uid in enumerate(users_list, 1):
-        msg += f"{i}. {user_data[uid]['name']} (ID: {uid})\n"
-    await update.message.reply_text(msg + "\nReply with the number to see full details.")
-
-async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMINS or not update.message.reply_to_message: return
-    try:
-        idx = int(update.message.text) - 1
-        u = user_data[users_list[idx]]
-        info = (f"👤 Profile Details:\n\nName: {u['name']}\nID: {u['id']}\nUsername: @{u['username']}\n"
-                f"Gender: {u['gender']}\nAge: {u['age']}\nLocation: {u['location']}\nDate: {u['date']}")
-        await update.message.reply_text(info)
-    except:
-        await update.message.reply_text("Invalid number.")
-
-# ... (Rest of the handlers same as before)
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'search':
+        # እዚህ ጋር search ፈንክሽኑን በእጅ መጥራት
+        await query.message.reply_text("🔎 Searching...")
+        # (ለቀላልነት በቀጥታ ኮዱን እዚህ መቀጠል ይቻላል)
+        
+if __name__ == '__main__':
+    # Render ላይ ስትጭኚ BOT_TOKEN የሚለውን Environment Variable ይጠቀማል
+    TOKEN = os.getenv("BOT_TOKEN", "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY")
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("search", search))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    print("Bot is running...")
+    app.run_polling()
