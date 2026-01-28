@@ -1,180 +1,173 @@
-import os, asyncio, sqlite3
-from aiogram import Bot, Dispatcher, types, executor
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
+import os, sqlite3, telebot, time
+from telebot import types
+from flask import Flask
+from threading import Thread
 
 # --- CONFIG ---
 TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
 ADMIN_ID = 8394878208
 CHANNELS = ["@anonymousely", "@anonymouslyrobott"]
-bot = Bot(token=TOKEN, parse_mode="HTML")
-dp = Dispatcher(bot, storage=MemoryStorage())
+bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
+app = Flask(__name__)
 
 # --- DB SETUP ---
-conn = sqlite3.connect("anonymous_pro.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-    (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER UNIQUE, name TEXT, location TEXT, 
-     gender TEXT, age INTEGER, hearts INTEGER DEFAULT 5, partner_id INTEGER DEFAULT 0, lang TEXT DEFAULT 'en')''')
-conn.commit()
+def init_db():
+    conn = sqlite3.connect('pro_bot.db')
+    conn.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER UNIQUE, name TEXT, 
+                  loc TEXT, gender TEXT, age INTEGER, hearts INTEGER DEFAULT 5, 
+                  refs INTEGER DEFAULT 0, partner INTEGER DEFAULT 0, lang TEXT)''')
+    conn.commit()
+    conn.close()
 
-class Registration(StatesGroup):
-    name = State()
-    location = State()
-    age = State()
-    gender = State()
+init_db()
+user_steps = {}
 
 # --- HELPERS ---
-async def check_join(user_id):
-    for channel in CHANNELS:
+def is_joined(uid):
+    for ch in CHANNELS:
         try:
-            member = await bot.get_chat_member(channel, user_id)
-            if member.status == "left": return False
+            status = bot.get_chat_member(ch, uid).status
+            if status == 'left': return False
         except: return False
     return True
 
-def get_user(user_id):
-    cursor.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
-    return cursor.fetchone()
+def get_user(uid):
+    conn = sqlite3.connect('pro_bot.db')
+    u = conn.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
+    conn.close()
+    return u
 
-# --- START & REGISTRATION ---
-@dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
-    user = get_user(message.from_user.id)
-    if not user:
-        await message.answer("👋 Welcome! Please enter your name:")
-        await Registration.name.set()
+# --- MENUS ---
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("⚡ Find a partner", "💎 Premium Search")
+    markup.row("👤 My Profile", "⚙️ Settings")
+    return markup
+
+# --- START & REG ---
+@bot.message_handler(commands=['start'])
+def start(m):
+    uid = m.from_user.id
+    u = get_user(uid)
+    if not u:
+        bot.send_message(uid, "👋 Welcome! Please enter your name (min 3 letters):")
+        ref = m.text.split()[1] if len(m.text.split()) > 1 else None
+        user_steps[uid] = {'step': 'name', 'ref': ref}
     else:
-        if not await check_join(message.from_user.id):
+        if not is_joined(uid):
+            msg = f"⚠️ Please join our channels first:\n1. {CHANNELS[0]}\n2. {CHANNELS[1]}"
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("✅ Check Joining", callback_data="check"))
-            await message.answer(f"⚠️ Please join our channels first:\n1. {CHANNELS[0]}\n2. {CHANNELS[1]}", reply_markup=markup)
-            return
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("⚡ Find a partner", "💎 Premium Search")
-        markup.row("👤 My Profile", "⚙️ Settings")
-        await message.answer("🏠 Main Menu", reply_markup=markup)
+            markup.add(types.InlineKeyboardButton("✅ Check", callback_data="check"))
+            return bot.send_message(uid, msg, reply_markup=markup)
+        bot.send_message(uid, "🏠 Main Menu", reply_markup=main_menu())
 
-@dp.message_handler(state=Registration.name)
-async def reg_name(message: types.Message, state: FSMContext):
-    if len(message.text) < 3:
-        await message.answer("❌ Too short! Enter at least 3 letters:")
-        return
-    await state.update_data(name=message.text)
-    await message.answer("📍 Enter your location:")
-    await Registration.location.set()
-
-@dp.message_handler(state=Registration.location)
-async def reg_loc(message: types.Message, state: FSMContext):
-    await state.update_data(location=message.text)
-    await message.answer("🎂 Enter your age:")
-    await Registration.age.set()
-
-@dp.message_handler(state=Registration.age)
-async def reg_age(message: types.Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("🔢 Please enter a number:")
-        return
-    await state.update_data(age=int(message.text))
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add("Male 👨", "Female 👩")
-    await message.answer("🚻 Select your gender:", reply_markup=markup)
-    await Registration.gender.set()
-
-@dp.message_handler(state=Registration.gender)
-async def reg_gender(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    cursor.execute("INSERT INTO users (user_id, name, location, age, gender) VALUES (?,?,?,?,?)",
-                   (message.from_user.id, data['name'], data['location'], data['age'], message.text))
-    conn.commit()
-    await state.finish()
-    await bot.send_message(ADMIN_ID, f"🆕 New User: {data['name']} | ID: <code>{message.from_user.id}</code>")
-    await cmd_start(message)
-
-# --- CHAT LOGIC ---
-@dp.message_handler(content_types=['text', 'photo', 'video', 'voice', 'document', 'animation'])
-async def handle_chat(message: types.Message):
-    user = get_user(message.from_user.id)
-    if not user: return
-
-    # Feature 15: Heart limit for replies
-    if message.reply_to_message and user[6] < 37:
-        await message.answer("❌ You need at least 37 ❤️ to reply to messages!")
-        return
-
-    if message.text == "⚡ Find a partner":
-        if user[7] != 0:
-            await message.answer("⚠️ You are already in a chat! Use /stop first.")
-            return
-        await message.answer("🔍 Searching for a partner...")
-        cursor.execute("SELECT user_id FROM users WHERE user_id != ? AND partner_id = 0 ORDER BY RANDOM() LIMIT 1", (message.from_user.id,))
-        partner = cursor.fetchone()
-        if partner:
-            p_id = partner[0]
-            cursor.execute("UPDATE users SET partner_id = ? WHERE user_id = ?", (p_id, message.from_user.id))
-            cursor.execute("UPDATE users SET partner_id = ? WHERE user_id = ?", (message.from_user.id, p_id))
-            conn.commit()
-            await bot.send_message(p_id, "⚡ Connected! Say hi 👋")
-            await message.answer("⚡ Connected! Say hi 👋")
+@bot.message_handler(func=lambda m: m.from_user.id in user_steps)
+def reg(m):
+    uid = m.from_user.id
+    step = user_steps[uid]['step']
+    if step == 'name':
+        if len(m.text) < 3: bot.send_message(uid, "❌ Too short! Try again:")
         else:
-            await message.answer("⏳ No one found. Try again in a moment.")
-
-    elif message.text == "💎 Premium Search":
-        await message.answer("💎 Premium Search costs 1 ❤️. Do you want to continue?")
-
-    elif message.text == "👤 My Profile":
-        link = f"https://t.me/{(await bot.get_me()).username}?start={message.from_user.id}"
-        await message.answer(f"👤 <b>Your Profile</b>\n\n❤️ Hearts: {user[6]}\n🔗 Share Link: <code>{link}</code>")
-
-    # Relay media/text to partner
-    elif user[7] != 0:
-        try:
-            await bot.copy_message(user[7], message.from_user.id, message.message_id)
-        except:
-            await message.answer("❌ Partner left the chat.")
-
-# --- STOP CHAT & RATING ---
-@dp.message_handler(commands=['stop'])
-async def cmd_stop(message: types.Message):
-    user = get_user(message.from_user.id)
-    if user and user[7] != 0:
-        p_id = user[7]
-        cursor.execute("UPDATE users SET partner_id = 0 WHERE user_id IN (?,?)", (message.from_user.id, p_id))
+            user_steps[uid].update({'name': m.text, 'step': 'loc'})
+            bot.send_message(uid, "📍 Enter your location:")
+    elif step == 'loc':
+        user_steps[uid].update({'loc': m.text, 'step': 'age'})
+        bot.send_message(uid, "🎂 Enter your age (number only):")
+    elif step == 'age':
+        if not m.text.isdigit(): bot.send_message(uid, "🔢 Numbers only:")
+        else:
+            user_steps[uid].update({'age': int(m.text), 'step': 'gender'})
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.add("Male 👨", "Female 👩")
+            bot.send_message(uid, "🚻 Select gender:", reply_markup=markup)
+    elif step == 'gender':
+        d = user_steps[uid]
+        conn = sqlite3.connect('pro_bot.db')
+        conn.execute("INSERT INTO users (uid, name, loc, age, gender) VALUES (?,?,?,?,?)",
+                     (uid, d['name'], d['loc'], d['age'], m.text))
+        if d['ref']:
+            rid = int(d['ref'])
+            conn.execute("UPDATE users SET refs = refs + 1 WHERE uid=?", (rid,))
+            r = conn.execute("SELECT refs FROM users WHERE uid=?", (rid,)).fetchone()
+            if r and r[0] % 2 == 0:
+                conn.execute("UPDATE users SET hearts = hearts + 1 WHERE uid=?", (rid,))
+                bot.send_message(rid, "❤️ You invited 2 people and earned 1 heart!")
         conn.commit()
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("👍", callback_data="rate_up"), types.InlineKeyboardButton("👎", callback_data="rate_down"))
-        await message.answer("❌ Chat ended. Rate your partner:", reply_markup=markup)
-        await bot.send_message(p_id, "❌ Chat ended. Rate your partner:", reply_markup=markup)
-    else:
-        await message.answer("❌ You are not in a chat.")
+        conn.close()
+        bot.send_message(ADMIN_ID, f"🆕 New User: {d['name']} | ID: <code>{uid}</code>")
+        del user_steps[uid]
+        bot.send_message(uid, "✅ Registration complete! Use /start.")
 
-# --- ADMIN COMMANDS ---
-@dp.message_handler(commands=['ping'], user_id=ADMIN_ID)
-async def admin_ping(message: types.Message):
-    text = message.get_args()
-    cursor.execute("SELECT user_id FROM users")
-    all_users = cursor.fetchall()
-    for u in all_users:
-        try: await bot.send_message(u[0], f"📢 <b>Update:</b>\n\n{text}")
+# --- CHAT & ADMIN ---
+@bot.message_handler(commands=['ping'])
+def ping(m):
+    if m.from_user.id != ADMIN_ID: return
+    txt = m.text.replace("/ping ", "")
+    conn = sqlite3.connect('pro_bot.db')
+    users = conn.execute("SELECT uid FROM users").fetchall()
+    for u in users:
+        try: bot.send_message(u[0], f"📢 {txt}")
         except: pass
-    await message.answer("✅ Broadcast sent!")
+    bot.reply_to(m, "✅ Sent!")
 
-@dp.message_handler(commands=['info13'], user_id=ADMIN_ID)
-async def admin_info(message: types.Message):
-    cursor.execute("SELECT id, name FROM users LIMIT 50")
-    users = cursor.fetchall()
-    res = "📋 <b>User List:</b>\n\n" + "\n".join([f"{u[0]}. {u[1]}" for u in users])
-    await message.answer(res)
+@bot.message_handler(commands=['info13'])
+def info13(m):
+    if m.from_user.id != ADMIN_ID: return
+    conn = sqlite3.connect('pro_bot.db')
+    users = conn.execute("SELECT id, name FROM users LIMIT 30").fetchall()
+    res = "📋 User List:\n" + "\n".join([f"{u[0]}. {u[1]}" for u in users])
+    bot.send_message(ADMIN_ID, res)
 
-@dp.message_handler(user_id=ADMIN_ID)
-async def admin_detail(message: types.Message):
-    if message.reply_to_message and message.text.isdigit():
-        cursor.execute("SELECT * FROM users WHERE id=?", (int(message.text),))
-        u = cursor.fetchone()
-        if u:
-            await message.answer(f"🆔 ID: {u[1]}\n👤 Name: {u[2]}\n📍 Loc: {u[3]}\n🚻 Gender: {u[4]}\n🎂 Age: {u[5]}\n❤️ Hearts: {u[6]}")
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice', 'animation'])
+def handle_all(m):
+    uid = m.from_user.id
+    u = get_user(uid)
+    if not u: return
+    
+    if m.reply_to_message and u[6] < 37:
+        return bot.send_message(uid, "❌ You need 37 ❤️ to reply!")
 
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    if m.text == "⚡ Find a partner":
+        if u[8] != 0: return bot.send_message(uid, "⚠️ Finish your chat first! Use /stop.")
+        bot.send_message(uid, "🔍 Searching...")
+        conn = sqlite3.connect('pro_bot.db')
+        p = conn.execute("SELECT uid FROM users WHERE uid!=? AND partner=0 ORDER BY RANDOM() LIMIT 1", (uid,)).fetchone()
+        if p:
+            pid = p[0]
+            conn.execute("UPDATE users SET partner=? WHERE uid=?", (pid, uid))
+            conn.execute("UPDATE users SET partner=? WHERE uid=?", (uid, pid))
+            conn.commit()
+            bot.send_message(uid, "⚡ Connected! Say hi 👋")
+            bot.send_message(pid, "⚡ Connected! Say hi 👋")
+        else: bot.send_message(uid, "⏳ No one found. Try again.")
+        conn.close()
+    
+    elif m.text == "👤 My Profile":
+        bot.send_message(uid, f"👤 Name: {u[2]}\n❤️ Hearts: {u[6]}\n🔗 Link: <code>t.me/{bot.get_me().username}?start={uid}</code>")
+
+    elif u[8] != 0:
+        try: bot.copy_message(u[8], uid, m.message_id)
+        except: bot.send_message(uid, "❌ Partner disconnected.")
+
+@bot.message_handler(commands=['stop'])
+def stop(m):
+    u = get_user(m.from_user.id)
+    if u and u[8] != 0:
+        pid = u[8]
+        conn = sqlite3.connect('pro_bot.db')
+        conn.execute("UPDATE users SET partner=0 WHERE uid IN (?,?)", (m.from_user.id, pid))
+        conn.commit()
+        conn.close()
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("👍", callback_data="r"), types.InlineKeyboardButton("👎", callback_data="r"))
+        bot.send_message(m.from_user.id, "❌ Chat ended. Rate:", reply_markup=markup)
+        bot.send_message(pid, "❌ Chat ended. Rate:", reply_markup=markup)
+
+# --- WEB SERVER ---
+@app.route('/')
+def h(): return "Bot Online"
+def run(): bot.polling(none_stop=True)
+if __name__ == "__main__":
+    Thread(target=run).start()
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
