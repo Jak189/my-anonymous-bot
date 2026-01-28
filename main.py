@@ -1,150 +1,171 @@
 import os
-import asyncio
-import threading
+import random
 import aiosqlite
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from threading import Thread
+from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    CallbackContext
 )
 
 # ================== CONFIG ==================
-BOT_TOKEN = os.getenv("8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY")
-ADMIN_ID = 8394878208
-DB = "users.db"
-PORT = int(os.getenv("PORT", 10000))
+TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
+DB_NAME = "users.db"
 
 # ================== FLASK ==================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "Anonymous Bot is running!"
 
 def run_flask():
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-# ================== DB ==================
+def keep_alive():
+    Thread(target=run_flask).start()
+
+# ================== DATABASE ==================
 async def init_db():
-    async with aiosqlite.connect(DB) as db:
+    async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS users(
+        CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
-            name TEXT,
-            location TEXT,
-            gender TEXT,
-            age INTEGER,
-            lang TEXT,
-            registered INTEGER DEFAULT 0
+            partner_id INTEGER
         )
         """)
         await db.commit()
 
-# ================== TEXT ==================
-TEXT = {
-    "am": {
-        "start": "👋 እንኳን ደህና መጡ\nቋንቋ ይምረጡ",
-        "name": "📝 ስምዎን ያስገቡ",
-        "location": "📍 መኖሪያ ቦታዎ?",
-        "gender": "⚧ ፆታ ይምረጡ",
-        "age": "🎂 እድሜዎ?",
-        "done": "✅ ተመዝግበዋል!\n/search ብለው ይጀምሩ",
-        "search": "🔍 ፓርትነር በመፈለግ ላይ...",
-        "stop": "❌ ተለይተዋል\n👍 👎 ሬት ይስጡ"
-    }
-}
+def run_async(coro):
+    import asyncio
+    return asyncio.get_event_loop().run_until_complete(coro)
 
-def t(lang, key):
-    return TEXT["am"][key]
-
-# ================== HANDLERS ==================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("🇪🇹 አማርኛ", callback_data="lang_am")]
-    ]
-    await update.message.reply_text(
-        TEXT["am"]["start"],
-        reply_markup=InlineKeyboardMarkup(kb)
+# ================== BOT COMMANDS ==================
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "👋 Selam!\n\n"
+        "ይህ Anonymous Chat Bot ነው 🤖\n"
+        "እንዲጀምር /search ብለህ ላክ"
     )
 
-async def set_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    context.user_data["lang"] = "am"
-    await q.message.reply_text(t("am", "name"))
+def search(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
 
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    async def _search():
+        async with aiosqlite.connect(DB_NAME) as db:
+            # check if already chatting
+            cur = await db.execute(
+                "SELECT partner_id FROM users WHERE user_id=?",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            if row and row[0]:
+                return "❗ አሁን በchat ላይ ነህ"
 
-    if "name" not in context.user_data:
-        if len(text) < 3:
-            return
-        context.user_data["name"] = text
-        await update.message.reply_text(t("am", "location"))
-        return
+            # find free user
+            cur = await db.execute(
+                "SELECT user_id FROM users WHERE partner_id IS NULL AND user_id!=?",
+                (user_id,)
+            )
+            users = await cur.fetchall()
 
-    if "location" not in context.user_data:
-        context.user_data["location"] = text
-        kb = [
-            [InlineKeyboardButton("👨 Male", callback_data="gender_Male")],
-            [InlineKeyboardButton("👩 Female", callback_data="gender_Female")]
-        ]
-        await update.message.reply_text(
-            t("am", "gender"),
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return
-
-    if "age" not in context.user_data:
-        if not text.isdigit():
-            return
-        context.user_data["age"] = int(text)
-
-        async with aiosqlite.connect(DB) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO users VALUES (?,?,?,?,?,?,1)",
-                (
-                    update.effective_user.id,
-                    context.user_data["name"],
-                    context.user_data["location"],
-                    context.user_data["gender"],
-                    context.user_data["age"],
-                    "am"
+            if not users:
+                await db.execute(
+                    "INSERT OR REPLACE INTO users (user_id, partner_id) VALUES (?, NULL)",
+                    (user_id,)
                 )
+                await db.commit()
+                return "🔎 ሰው በመፈለግ ላይ..."
+
+            partner = random.choice(users)[0]
+
+            await db.execute(
+                "UPDATE users SET partner_id=? WHERE user_id=?",
+                (partner, user_id)
+            )
+            await db.execute(
+                "UPDATE users SET partner_id=? WHERE user_id=?",
+                (user_id, partner)
             )
             await db.commit()
 
-        await update.message.reply_text(t("am", "done"))
+            context.bot.send_message(
+                chat_id=partner,
+                text="✅ ሰው ተገኝቷል! መልእክት ጀምር 🙂"
+            )
+            return "✅ ሰው ተገኝቷል! መልእክት ጀምር 🙂"
 
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"🆕 New user\n"
-            f"Name: {context.user_data['name']}\n"
-            f"Gender: {context.user_data['gender']}\n"
-            f"Age: {context.user_data['age']}\n"
-            f"ID: {update.effective_user.id}"
-        )
+    result = run_async(_search())
+    update.message.reply_text(result)
 
-async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    context.user_data["gender"] = q.data.split("_")[1]
-    await q.message.reply_text(t("am", "age"))
+def stop(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
 
-# ================== BOT RUN ==================
-async def run_bot():
-    await init_db()
-    application = Application.builder().token(BOT_TOKEN).build()
+    async def _stop():
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT partner_id FROM users WHERE user_id=?",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            if not row or not row[0]:
+                return "❗ አሁን በchat ላይ አይደለህም"
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(set_lang, pattern="lang_"))
-    application.add_handler(CallbackQueryHandler(set_gender, pattern="gender_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, register))
+            partner = row[0]
 
-    await application.run_polling()
+            await db.execute(
+                "UPDATE users SET partner_id=NULL WHERE user_id IN (?, ?)",
+                (user_id, partner)
+            )
+            await db.commit()
+
+            context.bot.send_message(
+                chat_id=partner,
+                text="❌ ባለጋራው chat አቋርጧል"
+            )
+            return "❌ chat ተቋርጧል"
+
+    result = run_async(_stop())
+    update.message.reply_text(result)
+
+def relay_message(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    text = update.message.text
+
+    async def _relay():
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT partner_id FROM users WHERE user_id=?",
+                (user_id,)
+            )
+            row = await cur.fetchone()
+            if not row or not row[0]:
+                return
+
+            partner = row[0]
+            context.bot.send_message(chat_id=partner, text=text)
+
+    run_async(_relay())
 
 # ================== MAIN ==================
+def main():
+    run_async(init_db())
+    keep_alive()
+
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("search", search))
+    dp.add_handler(CommandHandler("stop", stop))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, relay_message))
+
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    asyncio.run(run_bot())
+    main()
