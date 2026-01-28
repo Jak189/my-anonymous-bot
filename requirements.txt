@@ -1,3 +1,3 @@
-python-telegram-bot==13.15
-flask
+aiogram==2.25.1
 aiosqlite
+flask
