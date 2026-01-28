@@ -1,4 +1,2 @@
-aiogram==2.25.1
-aiosqlite
+pyTelegramBotAPI
 flask
-typing-extensions==4.5.0
