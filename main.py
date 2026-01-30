@@ -3,16 +3,16 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 
-# --- CONFIG ---
+# --- CONFIGURATION ---
 TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
 ADMIN_ID = 8394878208
 CHANNELS = ["@anonymousely", "@anonymouslyrobott"]
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# --- DB SETUP ---
+# --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('anonymous_pro.db', check_same_thread=False)
+    conn = sqlite3.connect('pro_database.db', check_same_thread=False)
     conn.execute('''CREATE TABLE IF NOT EXISTS users 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER UNIQUE, name TEXT, 
                   loc TEXT, gender TEXT, age INTEGER, hearts INTEGER DEFAULT 5, 
@@ -23,17 +23,17 @@ def init_db():
 db = init_db()
 user_steps = {}
 
-# --- TEXTS ---
+# --- TEXTS & LANGUAGES (Req 1, 16) ---
 TEXTS = {
     'am': {
         'start': "👋 እንኳን ደህና መጡ! ቦቱን ለመጠቀም መጀመሪያ ይመዝገቡ።\n\nእባክዎ ስምዎን ያስገቡ ✍️:",
         'loc': "📍 መኖሪያ ቦታዎ የት ነው?",
         'age': "🎂 እድሜዎን ያስገቡ (በቁጥር ብቻ 🔢):",
         'gender': "🚻 ጾታዎን ይምረጡ:",
-        'join': "⚠️ ቦቱን ለመቀጠል መጀመሪያ ቻናሎቻችንን መቀላቀል አለብዎት:\n1️⃣ {ch1}\n2️⃣ {ch2}",
+        'join': "⚠️ ቦቱን ለመቀጠል መጀመሪያ ቻናሎቻችንን መቀላቀል አለብዎት:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nተቀላቅለው ከሆነ <b>Check ✅</b> የሚለውን ይጫኑ።",
         'main': "🏠 ዋና ማውጫ",
-        'search': "🔍 ሸሪክ በመፈለግ ላይ...",
-        'found': "⚡ ተገናኝተዋል! አሪፍ ቆይታ ይሁንላችሁ 👋😊",
+        'search': "🔍 ሸሪክ በመፈለግ ላይ... እባክዎ ይጠብቁ ⏳",
+        'found': "⚡ ተገናኝተዋል! አሪፍ ቆይታ ይሁንላችሁ 👋😊\nለመለያየት /stop ይበሉ።",
         'stop': "❌ ቻት ተቋርጧል። ፓርትነርዎን ደረጃ ይስጡ 👇:",
         'heart_err': "❌ Reply ለመጻፍ ቢያንስ 37 ❤️ ያስፈልግዎታል! 💔"
     },
@@ -42,10 +42,10 @@ TEXTS = {
         'loc': "📍 Where do you live?",
         'age': "🎂 Enter your age (numbers only 🔢):",
         'gender': "🚻 Select your gender:",
-        'join': "⚠️ You must join our channels first:\n1️⃣ {ch1}\n2️⃣ {ch2}",
+        'join': "⚠️ You must join our channels first:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nIf joined, click <b>Check ✅</b>.",
         'main': "🏠 Main Menu",
-        'search': "🔍 Searching for a partner...",
-        'found': "⚡ Connected! Have a great chat 👋😊",
+        'search': "🔍 Searching for a partner... please wait ⏳",
+        'found': "⚡ Connected! Have a great chat 👋😊\nUse /stop to disconnect.",
         'stop': "❌ Chat ended. Rate your partner 👇:",
         'heart_err': "❌ You need at least 37 ❤️ to reply! 💔"
     }
@@ -60,15 +60,14 @@ def is_joined(uid):
         except: return False
     return True
 
-def get_user(uid):
+def get_u(uid):
     return db.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
 
-# --- REGISTRATION ---
+# --- START & REGISTRATION (Req 2, 3, 4, 13) ---
 @bot.message_handler(commands=['start'])
 def start(m):
     uid = m.from_user.id
-    u = get_user(uid)
-    
+    u = get_u(uid)
     if not u:
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("Amharic 🇪🇹", callback_data="l_am"),
@@ -95,20 +94,20 @@ def set_lang(call):
     bot.edit_message_text(TEXTS[lang]['start'], uid, call.message.message_id)
 
 @bot.message_handler(func=lambda m: m.from_user.id in user_steps)
-def reg_process(m):
+def reg_flow(m):
     uid = m.from_user.id
     step = user_steps[uid]['step']
     lang = user_steps[uid].get('lang', 'am')
     
     if step == 'name':
-        if len(m.text) < 3: return bot.send_message(uid, "❌")
+        if len(m.text) < 3: return bot.send_message(uid, "❌ ስም ከ 3 ፊደል በላይ መሆን አለበት:")
         user_steps[uid].update({'name': m.text, 'step': 'loc'})
         bot.send_message(uid, TEXTS[lang]['loc'])
     elif step == 'loc':
         user_steps[uid].update({'loc': m.text, 'step': 'age'})
         bot.send_message(uid, TEXTS[lang]['age'])
     elif step == 'age':
-        if not m.text.isdigit(): return bot.send_message(uid, "🔢")
+        if not m.text.isdigit(): return bot.send_message(uid, "🔢 ቁጥር ብቻ ያስገቡ:")
         user_steps[uid].update({'age': int(m.text), 'step': 'gender'})
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         markup.add("Male 👨", "Female 👩")
@@ -121,67 +120,61 @@ def reg_process(m):
             rid = int(d['ref'])
             db.execute("UPDATE users SET refs = refs + 1 WHERE uid=?", (rid,))
             refs = db.execute("SELECT refs FROM users WHERE uid=?", (rid,)).fetchone()[0]
-            if refs % 2 == 0:
+            if refs % 2 == 0: # Every 2 shares = 1 Heart (Req 5)
                 db.execute("UPDATE users SET hearts = hearts + 1 WHERE uid=?", (rid,))
-                try: bot.send_message(rid, "❤️ 1 Heart Earned! 🎉")
+                try: bot.send_message(rid, "❤️ 2 ሰው ስለጋበዙ 1 ልብ ተሰጥቶዎታል! 🎉")
                 except: pass
         db.commit()
-        bot.send_message(ADMIN_ID, f"🆕 New User Registered!\nID: <code>{uid}</code>")
+        bot.send_message(ADMIN_ID, f"🆕 <b>አዲስ ተመዝጋቢ</b> (Req 4/9):\nID: <code>{uid}</code>\nስም: {d['name']}")
         del user_steps[uid]
-        bot.send_message(uid, "✅ Success! /start")
+        bot.send_message(uid, "✅ ምዝገባ ተጠናቋል። ለመቀጠል /start ይበሉ።")
 
-# --- CHAT & MEDIA RELAY ---
-@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice', 'animation', 'video_note', 'sticker'])
-def handle_all(m):
+# --- CHAT & MEDIA RELAY (Req 14, 15, 17, 19) ---
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice', 'animation', 'sticker'])
+def relay(m):
     uid = m.from_user.id
-    u = get_user(uid)
+    u = get_u(uid)
     if not u: return
     
-    lang = u[9]
-
+    # Heart check for reply (Req 15)
     if m.reply_to_message and u[6] < 37:
-        return bot.send_message(uid, TEXTS[lang]['heart_err'])
+        return bot.send_message(uid, TEXTS[u[9]]['heart_err'])
 
     if m.text == "⚡ Find a partner 🔍":
-        if u[8] != 0: return bot.send_message(uid, "⚠️ /stop first!")
-        bot.send_message(uid, TEXTS[lang]['search'])
+        if u[8] != 0: return bot.send_message(uid, "⚠️ መጀመሪያ ካሉበት ቻት ለመውጣት /stop ይበሉ።")
+        bot.send_message(uid, TEXTS[u[9]]['search'])
         p = db.execute("SELECT uid FROM users WHERE uid!=? AND partner=0 ORDER BY RANDOM() LIMIT 1", (uid,)).fetchone()
         if p:
             pid = p[0]
             db.execute("UPDATE users SET partner=? WHERE uid=?", (pid, uid))
             db.execute("UPDATE users SET partner=? WHERE uid=?", (uid, pid))
             db.commit()
-            bot.send_message(uid, TEXTS[lang]['found'])
-            bot.send_message(pid, TEXTS[lang]['found'])
-        else: bot.send_message(uid, "⏳ No one found.")
-
-    elif m.text == "💎 Premium Search ✨":
-        bot.send_message(uid, "💎 Premium Search costs 1 ❤️ or Stars.\nSelect Gender:", reply_markup=types.InlineKeyboardMarkup().add(
-            types.InlineKeyboardButton("Female 👩", callback_data="ps_Female"),
-            types.InlineKeyboardButton("Male 👨", callback_data="ps_Male")
-        ))
+            bot.send_message(uid, TEXTS[u[9]]['found'])
+            bot.send_message(pid, TEXTS[get_u(pid)[9]]['found'])
+        else: bot.send_message(uid, "⏳ በአሁኑ ሰዓት ሰው አልተገኘም...")
 
     elif m.text == "👤 My Profile 📝":
-        link = f"t.me/{bot.get_me().username}?start={uid}"
-        bot.send_message(uid, f"👤 <b>Profile</b>\n\n❤️ Hearts: {u[6]}\n🔗 Share Link: <code>{link}</code>")
+        link = f"t.me/{bot.get_me().username}?start={uid}" # Req 12
+        bot.send_message(uid, f"👤 <b>የእርስዎ መረጃ</b>\n\n❤️ ልብ: {u[6]}\n🔗 መጋበዣ ሊንክ: <code>{link}</code>")
 
+    # Relay mechanism (Req 14, 19)
     elif u[8] != 0:
         try: bot.copy_message(u[8], uid, m.message_id)
-        except: bot.send_message(uid, "❌ Failed to deliver.")
+        except: bot.send_message(uid, "❌ መልእክቱ አልደረሰም።")
 
 @bot.message_handler(commands=['stop'])
-def stop_chat(m):
+def stop(m):
     uid = m.from_user.id
-    u = get_user(uid)
+    u = get_u(uid)
     if u and u[8] != 0:
         pid = u[8]
         db.execute("UPDATE users SET partner=0 WHERE uid IN (?,?)", (uid, pid))
         db.commit()
         markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👍", callback_data="r"), types.InlineKeyboardButton("👎", callback_data="r"))
         bot.send_message(uid, TEXTS[u[9]]['stop'], reply_markup=markup)
-        bot.send_message(pid, TEXTS[get_user(pid)[9]]['stop'], reply_markup=markup)
+        bot.send_message(pid, TEXTS[get_u(pid)[9]]['stop'], reply_markup=markup)
 
-# --- ADMIN COMMANDS ---
+# --- ADMIN COMMANDS (Req 8, 11) ---
 @bot.message_handler(commands=['ping'])
 def ping(m):
     if m.from_user.id != ADMIN_ID: return
@@ -195,20 +188,22 @@ def ping(m):
 def info13(m):
     if m.from_user.id != ADMIN_ID: return
     res = db.execute("SELECT id, name FROM users LIMIT 50").fetchall()
-    txt = "📋 <b>Users:</b>\n" + "\n".join([f"{r[0]}. {r[1]}" for r in res])
-    bot.send_message(ADMIN_ID, txt)
+    txt = "📋 <b>ተጠቃሚዎች:</b>\n" + "\n".join([f"{r[0]}. {r[1]}" for r in res])
+    bot.send_message(ADMIN_ID, txt + "\n\nመረጃ ለማየት ቁጥሩን Reply ያድርጉ።")
 
 @bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and m.reply_to_message)
-def admin_reply(m):
+def admin_detail(m):
     if m.text.isdigit():
         u = db.execute("SELECT * FROM users WHERE id=?", (int(m.text),)).fetchone()
         if u:
-            bot.send_message(ADMIN_ID, f"👤 Info:\nID: {u[1]}\nName: {u[2]}\nLoc: {u[3]}\nGender: {u[4]}\nAge: {u[5]}\n❤️: {u[6]}")
+            info = f"👤 መረጃ:\n\nID: <code>{u[1]}</code>\nስም: {u[2]}\nቦታ: {u[3]}\nጾታ: {u[4]}\nእድሜ: {u[5]}\n❤️ ልብ: {u[6]}"
+            bot.send_message(ADMIN_ID, info)
 
-# --- SERVER ---
+# --- WEB SERVER ---
 @app.route('/')
-def home(): return "Bot Active"
-def run(): bot.infinity_polling()
+def home(): return "Bot is Online 🚀"
+def run_polling(): bot.infinity_polling()
+
 if __name__ == "__main__":
-    Thread(target=run).start()
+    Thread(target=run_polling).start()
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
