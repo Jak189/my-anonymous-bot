@@ -28,6 +28,7 @@ def init_db():
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                       uid INTEGER UNIQUE, 
                       name TEXT, 
+                      username TEXT,
                       loc TEXT, 
                       gender TEXT, 
                       age INTEGER, 
@@ -43,11 +44,11 @@ user_steps = {}
 # --- TEXTS & LANGUAGES ---
 TEXTS = {
     'am': {
-        'start': "👋 እንኳን ደህና መጡ! ቦቱን ለመጠቀም መጀመሪያ ይመዝገቡ።\n\nእባክዎ ስምዎን ያስገቡ ✍️:",
+        'start_welcome': "👋 እንኳን ደህና መጡ <b>{name}</b>! ለመቀጠል እባክዎ ጥቂት መረጃዎችን ይሙሉ::",
         'loc': "📍 መኖሪያ ቦታዎ የት ነው?",
         'age': "🎂 እድሜዎን ያስገቡ (በቁጥር ብቻ 🔢):",
         'gender': "🚻 ጾታዎን ይምረጡ:",
-        'join': "⚠️ ቦቱን ለመቀጠል መጀመሪያ ቻናሎቻችንን መቀላቀል አለብዎት:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nተቀላቅለው ከሆነ <b>Check ✅</b> የሚለውን ይጫኑ።",
+        'join': "⚠️ ቦቱን ለመጠቀም መጀመሪያ ቻናሎቻችንን መቀላቀል አለብዎት:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nተቀላቅለው እንደጨረሱ ደግመው /start ይበሉ።",
         'main': "🏠 ዋና ማውጫ",
         'search': "🔍 ሸሪክ በመፈለግ ላይ... እባክዎ ይጠብቁ ⏳",
         'found': "⚡ ተገናኝተዋል! አሪፍ ቆይታ ይሁንላችሁ 👋😊\nለመለያየት /stop ይበሉ።",
@@ -55,11 +56,11 @@ TEXTS = {
         'heart_err': "❌ Reply ለመጻፍ ቢያንስ 37 ❤️ ያስፈልግዎታል! 💔"
     },
     'en': {
-        'start': "👋 Welcome! Please register first to use the bot.\n\nEnter your name ✍️:",
+        'start_welcome': "👋 Welcome <b>{name}</b>! Please complete your profile to continue.",
         'loc': "📍 Where do you live?",
         'age': "🎂 Enter your age (numbers only 🔢):",
         'gender': "🚻 Select your gender:",
-        'join': "⚠️ You must join our channels first:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nIf joined, click <b>Check ✅</b>.",
+        'join': "⚠️ You must join our channels first:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nAfter joining, click /start again.",
         'main': "🏠 Main Menu",
         'search': "🔍 Searching for a partner... please wait ⏳",
         'found': "⚡ Connected! Have a great chat 👋😊\nUse /stop to disconnect.",
@@ -70,6 +71,7 @@ TEXTS = {
 
 # --- HELPERS ---
 def is_joined(uid):
+    """ቦቱ አውቶማቲክ ቻናል የተቀላቀለ መሆኑን ራሱ ቼክ ያደርጋል"""
     for ch in CHANNELS:
         try:
             status = bot.get_chat_member(ch, uid).status
@@ -97,37 +99,35 @@ def show_main_menu(uid, lang):
 @bot.message_handler(commands=['start'])
 def start(m):
     uid = m.from_user.id
+    first_name = m.from_user.first_name or "User"
+    username = m.from_user.username or "None"
+    
+    # 1. አውቶማቲክ ቻናል ቼክ ማድረጊያ
+    if not is_joined(uid):
+        return bot.send_message(uid, TEXTS['am']['join'].format(ch1=CHANNELS[0], ch2=CHANNELS[1]))
+
     u = get_u(uid)
     
+    # 2. አዲስ ተጠቃሚ ከሆነ ቋንቋ እንዲመርጥ ያደርጋል
     if not u:
         markup = types.InlineKeyboardMarkup()
         markup.add(
             types.InlineKeyboardButton("Amharic 🇪🇹", callback_data="l_am"),
             types.InlineKeyboardButton("English 🇺🇸", callback_data="l_en")
         )
-        bot.send_message(uid, "🌍 Select Language / ቋንቋ ይምረጡ:", reply_markup=markup)
+        bot.send_message(uid, f"👋 ሰላም {first_name}! ቋንቋ ይምረጡ / Select Language:", reply_markup=markup)
         ref = m.text.split()[1] if len(m.text.split()) > 1 else None
-        user_steps[uid] = {'step': 'lang', 'ref': ref}
-    else:
-        if not is_joined(uid):
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("✅ Check / ቸክ አድርግ", callback_data="check"))
-            return bot.send_message(uid, TEXTS[u['lang']]['join'].format(ch1=CHANNELS[0], ch2=CHANNELS[1]), reply_markup=markup)
         
-        show_main_menu(uid, u['lang'])
-
-@bot.callback_query_handler(func=lambda call: call.data == 'check')
-def check_join(call):
-    uid = call.from_user.id
-    u = get_u(uid)
-    if not u:
-        return bot.answer_callback_query(call.id, "እባክዎ መጀመሪያ ይመዝገቡ /start")
-    
-    if is_joined(uid):
-        bot.delete_message(uid, call.message.message_id)
-        show_main_menu(uid, u['lang'])
+        # የቴሌግራም ስምና ዩዘርኔም በራሱ ይወሰዳል
+        user_steps[uid] = {
+            'step': 'lang', 
+            'ref': ref, 
+            'auto_name': first_name, 
+            'username': username
+        }
     else:
-        bot.answer_callback_query(call.id, "❌ አሁንም ቻናሎቹን አልተቀላቀሉም!", show_alert=True)
+        # ቀደም ሲል ከተመዘገበ አውቶማቲክ ወደ ዋና ማውጫ ያልፋል
+        show_main_menu(uid, u['lang'])
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('l_'))
 def set_lang(call):
@@ -137,8 +137,11 @@ def set_lang(call):
     if uid not in user_steps:
         user_steps[uid] = {}
         
-    user_steps[uid].update({'lang': lang, 'step': 'name'})
-    bot.edit_message_text(TEXTS[lang]['start'], uid, call.message.message_id)
+    user_steps[uid].update({'lang': lang, 'step': 'loc'})
+    
+    bot.delete_message(uid, call.message.message_id)
+    bot.send_message(uid, TEXTS[lang]['start_welcome'].format(name=user_steps[uid].get('auto_name', '')))
+    bot.send_message(uid, TEXTS[lang]['loc'])
 
 @bot.message_handler(func=lambda m: m.from_user.id in user_steps and 'step' in user_steps[m.from_user.id])
 def reg_flow(m):
@@ -146,19 +149,13 @@ def reg_flow(m):
     step = user_steps[uid]['step']
     lang = user_steps[uid].get('lang', 'am')
     
-    if step == 'name':
-        if len(m.text) < 3:
-            return bot.send_message(uid, "❌ ስም ከ 3 ፊደል በላይ መሆን አለበት:")
-        user_steps[uid].update({'name': m.text, 'step': 'loc'})
-        bot.send_message(uid, TEXTS[lang]['loc'])
-        
-    elif step == 'loc':
+    if step == 'loc':
         user_steps[uid].update({'loc': m.text, 'step': 'age'})
         bot.send_message(uid, TEXTS[lang]['age'])
         
     elif step == 'age':
         if not m.text.isdigit():
-            return bot.send_message(uid, "🔢 ቁጥር ብቻ ያስገቡ:")
+            return bot.send_message(uid, "🔢 እባክዎ ቁጥር ብቻ ያስገቡ:")
         user_steps[uid].update({'age': int(m.text), 'step': 'gender'})
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         markup.add("Male 👨", "Female 👩")
@@ -170,9 +167,14 @@ def reg_flow(m):
         
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (uid, name, loc, age, gender, lang) VALUES (?,?,?,?,?,?)", 
-                       (uid, d['name'], d['loc'], d['age'], gender, d['lang']))
         
+        # መረጃዎችን በራስ-ሰር በ Database ማስቀመጥ
+        cursor.execute("""
+            INSERT INTO users (uid, name, username, loc, age, gender, lang) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (uid, d['auto_name'], d['username'], d['loc'], d['age'], gender, d['lang']))
+        
+        # Referral System
         if d.get('ref'):
             try:
                 rid = int(d['ref'])
@@ -192,25 +194,23 @@ def reg_flow(m):
         conn.close()
         
         try:
-            bot.send_message(ADMIN_ID, f"🆕 <b>አዲስ ተመዝጋቢ</b>:\nID: <code>{uid}</code>\nስም: {d['name']}")
+            bot.send_message(ADMIN_ID, f"🆕 <b>አዲስ ተመዝጋቢ:</b>\nID: <code>{uid}</code>\nስም: {d['auto_name']}\nUsername: @{d['username']}")
         except Exception:
             pass
             
         del user_steps[uid]
-        bot.send_message(uid, "✅ ምዝገባ ተጠናቋል።")
-        
-        u = get_u(uid)
-        if not is_joined(uid):
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("✅ Check / ቸክ አድርግ", callback_data="check"))
-            bot.send_message(uid, TEXTS[lang]['join'].format(ch1=CHANNELS[0], ch2=CHANNELS[1]), reply_markup=markup)
-        else:
-            show_main_menu(uid, lang)
+        bot.send_message(uid, "✅ ምዝገባዎ በስኬት ተጠናቋል።")
+        show_main_menu(uid, lang)
 
 # --- CHAT & MEDIA RELAY ---
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'voice', 'animation', 'sticker'])
 def relay(m):
     uid = m.from_user.id
+    
+    # የቻናል አባልነቱን በየጊዜው በራሱ ቼክ ያደርጋል
+    if not is_joined(uid):
+        return bot.send_message(uid, TEXTS['am']['join'].format(ch1=CHANNELS[0], ch2=CHANNELS[1]))
+
     u = get_u(uid)
     if not u:
         return
@@ -247,7 +247,7 @@ def relay(m):
     elif m.text == "👤 My Profile 📝":
         bot_username = bot.get_me().username
         link = f"https://t.me/{bot_username}?start={uid}"
-        bot.send_message(uid, f"👤 <b>የእርስዎ መረጃ</b>\n\n❤️ ልብ: {u['hearts']}\n🔗 መጋበዣ ሊንክ: <code>{link}</code>")
+        bot.send_message(uid, f"👤 <b>የእርስዎ መረጃ</b>\n\n🆔 ID: <code>{u['uid']}</code>\n👤 ስም: {u['name']}\n❤️ ልብ: {u['hearts']}\n🔗 መጋበዣ ሊንክ: <code>{link}</code>")
 
     # Partner message forwarding
     elif u['partner'] != 0:
@@ -269,20 +269,9 @@ def stop(m):
         conn.commit()
         conn.close()
         
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("👍", callback_data="r_like"),
-            types.InlineKeyboardButton("👎", callback_data="r_dislike")
-        )
-        
         p_user = get_u(pid)
-        bot.send_message(uid, TEXTS[u['lang']]['stop'], reply_markup=markup)
-        bot.send_message(pid, TEXTS[p_user['lang']]['stop'], reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('r_'))
-def rating_handler(call):
-    bot.answer_callback_query(call.id, "ምላሽዎ ተመዝግቧል! አመሰግናለሁ።")
-    bot.edit_message_reply_markup(call.from_user.id, call.message.message_id, reply_markup=None)
+        bot.send_message(uid, TEXTS[u['lang']]['stop'])
+        bot.send_message(pid, TEXTS[p_user['lang']]['stop'])
 
 # --- ADMIN COMMANDS ---
 @bot.message_handler(commands=['ping'])
@@ -308,44 +297,13 @@ def ping(m):
             pass
     bot.send_message(ADMIN_ID, f"✅ መልእክቱ ለ {sent_count} ተጠቃሚዎች ተልኳል።")
 
-@bot.message_handler(commands=['info13'])
-def info13(m):
-    if m.from_user.id != ADMIN_ID:
-        return
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name FROM users LIMIT 50")
-    res = cursor.fetchall()
-    conn.close()
-    
-    if not res:
-        return bot.send_message(ADMIN_ID, "ምንም ተጠቃሚ አልተገኘም።")
-        
-    txt = "📋 <b>ተጠቃሚዎች:</b>\n" + "\n".join([f"{r['id']}. {r['name']}" for r in res])
-    bot.send_message(ADMIN_ID, txt + "\n\nመረጃ ለማየት ቁጥሩን Reply ያድርጉ።")
-
-@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and m.reply_to_message)
-def admin_detail(m):
-    if m.text.isdigit():
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE id=?", (int(m.text),))
-        u = cursor.fetchone()
-        conn.close()
-        
-        if u:
-            info = f"👤 መረጃ:\n\nID: <code>{u['uid']}</code>\nስም: {u['name']}\nቦታ: {u['loc']}\nጾታ: {u['gender']}\nእድሜ: {u['age']}\n❤️ ልብ: {u['hearts']}"
-            bot.send_message(ADMIN_ID, info)
-        else:
-            bot.send_message(ADMIN_ID, "❌ በዚህ ID ተጠቃሚ አልተገኘም።")
-
 # --- WEB SERVER ---
 @app.route('/')
 def home():
     return "Bot is Online 🚀"
 
 def run_polling():
-    bot.infinity_polling(skip_pending=callbacks_data_filter if 'callbacks_data_filter' in locals() else True)
+    bot.infinity_polling(skip_pending=True)
 
 if __name__ == "__main__":
     Thread(target=run_polling).start()
