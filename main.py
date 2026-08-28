@@ -9,7 +9,7 @@ from threading import Thread
 TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
 ADMIN_ID = 8394878208
 BOT_USERNAME = "Anonymouslyrobot"  # የእርስዎ ቦት ዩዘርኔም
-CHANNELS = ["@anonymousely", "@anonymouslyrobott"]
+CHANNELS = ["https://t.me/anonymouslyrobott"]
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
