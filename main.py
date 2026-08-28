@@ -8,6 +8,7 @@ from threading import Thread
 # --- CONFIGURATION ---
 TOKEN = "8331406291:AAEHti7O2wVZqV658R-_Kwvu2d65TA_yBAY"
 ADMIN_ID = 8394878208
+BOT_USERNAME = "Anonymouslyrobot"  # የእርስዎ ቦት ዩዘርኔም
 CHANNELS = ["@anonymousely", "@anonymouslyrobott"]
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
@@ -52,7 +53,7 @@ TEXTS = {
         'main': "🏠 ዋና ማውጫ",
         'search': "🔍 ሸሪክ በመፈለግ ላይ... እባክዎ ይጠብቁ ⏳",
         'found': "⚡ ተገናኝተዋል! አሪፍ ቆይታ ይሁንላችሁ 👋😊\nለመለያየት /stop ይበሉ።",
-        'stop': "❌ ቻት ተቋርጧል። ፓርትነርዎን ደረጃ ይስጡ 👇:",
+        'stop': "❌ ቻት ተቋርጧል።",
         'heart_err': "❌ Reply ለመጻፍ ቢያንስ 37 ❤️ ያስፈልግዎታል! 💔"
     },
     'en': {
@@ -60,11 +61,11 @@ TEXTS = {
         'loc': "📍 Where do you live?",
         'age': "🎂 Enter your age (numbers only 🔢):",
         'gender': "🚻 Select your gender:",
-        'join': "⚠️ You must join our channels first:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nAfter joining, click /start again.",
+        'join': "⚠️ You must join our channels first:\n\n1️⃣ {ch1}\n2️⃣ {ch2}\n\nAfter joining, send /start again.",
         'main': "🏠 Main Menu",
         'search': "🔍 Searching for a partner... please wait ⏳",
         'found': "⚡ Connected! Have a great chat 👋😊\nUse /stop to disconnect.",
-        'stop': "❌ Chat ended. Rate your partner 👇:",
+        'stop': "❌ Chat ended.",
         'heart_err': "❌ You need at least 37 ❤️ to reply! 💔"
     }
 }
@@ -102,13 +103,13 @@ def start(m):
     first_name = m.from_user.first_name or "User"
     username = m.from_user.username or "None"
     
-    # 1. አውቶማቲክ ቻናል ቼክ ማድረጊያ
+    # አውቶማቲክ ቻናል ቼክ ማድረጊያ
     if not is_joined(uid):
         return bot.send_message(uid, TEXTS['am']['join'].format(ch1=CHANNELS[0], ch2=CHANNELS[1]))
 
     u = get_u(uid)
     
-    # 2. አዲስ ተጠቃሚ ከሆነ ቋንቋ እንዲመርጥ ያደርጋል
+    # አዲስ ተጠቃሚ ከሆነ ቋንቋ እንዲመርጥ ያደርጋል
     if not u:
         markup = types.InlineKeyboardMarkup()
         markup.add(
@@ -245,8 +246,8 @@ def relay(m):
             bot.send_message(uid, "⏳ በአሁኑ ሰዓት ሰው አልተገኘም...")
 
     elif m.text == "👤 My Profile 📝":
-        bot_username = bot.get_me().username
-        link = f"https://t.me/{bot_username}?start={uid}"
+        # @Anonymouslyrobot በሚለው የተስተካከለ መጋበዣ ሊንክ
+        link = f"https://t.me/{BOT_USERNAME}?start={uid}"
         bot.send_message(uid, f"👤 <b>የእርስዎ መረጃ</b>\n\n🆔 ID: <code>{u['uid']}</code>\n👤 ስም: {u['name']}\n❤️ ልብ: {u['hearts']}\n🔗 መጋበዣ ሊንክ: <code>{link}</code>")
 
     # Partner message forwarding
